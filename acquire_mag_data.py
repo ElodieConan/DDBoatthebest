@@ -13,7 +13,7 @@ imu = imudrv.Imu9IO()
 output_file = "mag_raw_data.txt"
 
 # --- Nombre de mesures à acquérir ---
-N = 500
+N = 1000
 
 print("Début de l'acquisition magnétomètre...")
 print("Fichier :", output_file)
@@ -27,6 +27,6 @@ with open(output_file, "w") as f:
         f.write(line)
         if i % 50 == 0:
             print("  {}/{} mesures enregistrées...".format(i, N))
-        time.sleep(0.05)
+        time.sleep(0.01)
 
 print("✅ Acquisition terminée. Données sauvegardées dans", output_file)
