@@ -28,21 +28,21 @@ for i in range(n):
 
 #Fonctions pour obtenir les angles d'Euler :
 
-#façon exo 8 inertiel
-
-def bank(a1): #roulis
-    return np.arcsin(a1[1,0])
-def elevation(a1): #tanguage
-    return np.arcsin(a1[0,0])
-def heading(a1, y1) : #lacet
-    Rh=rotuv(a1,a0)
-    yh=Rh@y1
-    return -np.arctan2(yh[1],yh[0])
 
 #façon cours
 
 def angles_Euler(a1,y1):
-    R=np.array([(y1@y1.T)@a1])
+    r1=y1-((y1.T@a1)*a1)
+    normr1=np.linalg.norm(r1)
+    v = (y1 - (y1.T @ a1) * a1).flatten()
+    r2 = np.cross(a1.flatten(), v)
+    normr2=np.linalg.norm(r2)
+    R = np.column_stack((r1 / normr1, r2 / normr2, a1))
+    phi=np.arctan2(R[2,1],R[2,2])
+    theta=-np.arcsin(R[2,0])
+    psi=np.arctan2(R[1,0],R[0,0])
+    return phi,theta,psi
+
 
 x, y, z = data[:, 0], data[:, 1], data[:, 2]
 y1_corr = np.column_stack((x, y, z))
@@ -54,5 +54,5 @@ n = data.shape[0]
 x, y, z = data[:,0], data[:,1], data[:,2]
 y1_corr=np.column_stack((x, y,z))
 for i in range(n):
-    y1_corr = np.array([x[i], y[i], z[i]])
-    print("cap",heading(a1,y1_corr.T)*180/np.pi)
+    y1_corr = np.array([[x[i]], [y[i]], [z[i]]])
+    print("Euler",angles_Euler(a1,y1_corr)[2]*180/np.pi)
