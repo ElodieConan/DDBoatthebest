@@ -40,7 +40,8 @@ reference_x,reference_y= projDegree2Meter(lon_ponton,lat_ponton)
 gps = gpddrv.GpsIO()  # create a GPS object
 gps.set_filter_speed("0")  # allowing GPS measures to change even if the DDBoat is not moving
 cnt = 150  # takes 5 GPS measures
-while True:
+distance=40
+while distance>0.5 :
     gll_ok, gll_data = gps.read_gll_non_blocking()
 
     if gll_ok:  # GPGLL message received
@@ -59,5 +60,26 @@ while True:
         if cnt == 0:
             break
     time.sleep(0.01)
+distance=40
+reference_x,reference_y= projDegree2Meter(lon_ponton,lat_ponton)
+while distance>0.5 :
+    gll_ok, gll_data = gps.read_gll_non_blocking()
+    if gll_ok:  # GPGLL message received
+        lat, lon = cvt_gll_ddmm_2_dd(gll_data)  # convert DDMM.MMMM toDD.DDDDD
+        x, y = projDegree2Meter(lon, lat)  # convert to meters
+        lat_check, lon_check = projDegree2Meter(x, y, inverse=True)  # check conversion OK
+        dx = x - reference_x
+        dy = y - reference_y
+        distance = np.sqrt(dx * dx + dy * dy)
+        heading_trigo = np.degrees(np.arctan2(dy, dx))
+        heading_geo = 90.0 - heading_trigo  # convert from trigonomety togeographic
+        print("lat=%.4flon=%.4f(check %.4f %.4f)x=%.2fy=%.2fdx=%.2f, dy=%.2f, distance=%.2f, heading=%.2f" %
+              (lat, lon, lat_check, lon_check, x, y, dx, dy, distance, heading_geo))
+        pnt = kml.newpoint(name="GPS", coords=[(lon, lat)])
+        cnt -= 1
+        if cnt == 0:
+            break
+    time.sleep(0.01)
+
 
 kml.save("gps_data.kml")
