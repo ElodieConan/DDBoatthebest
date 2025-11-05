@@ -12,7 +12,7 @@ import simplekml
 kml = simplekml.Kml()
 
 from pyproj import Proj, transform
-projDegree2Meter = Proj("+proj=utm +zone=30,+north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
+projDegree2Meter = Proj("+proj=utm +zone=30 +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
 
 
 
@@ -29,10 +29,13 @@ def cvt_gll_ddmm_2_dd(st):
         olon = -olon
     return olat, olon
 
- #referencepoint "Guerledan'slake"
-reference_lat =48.199111
-reference_lon =-3.014930
-reference_x,reference_y= projDegree2Meter(reference_lon,reference_lat)
+#reference du bout du ponton
+lat_ponton =48.198238
+lon_ponton =-3.015003
+altitude=121       #en mètres
+lat_bouee=48.19932
+lon_bouee=-3.01320
+reference_x,reference_y= projDegree2Meter(lon_ponton,lat_ponton)
 
 gps = gpddrv.GpsIO()  # create a GPS object
 gps.set_filter_speed("0")  # allowing GPS measures to change even if the DDBoat is not moving
@@ -42,7 +45,7 @@ while True:
 
     if gll_ok:  # GPGLL message received
         lat, lon = cvt_gll_ddmm_2_dd(gll_data)  # convert DDMM.MMMM toDD.DDDDD
-        x, y = projDegree2Meter(lon, lat)  # convert tometers
+        x, y = projDegree2Meter(lon, lat)  # convert to meters
         lat_check, lon_check = projDegree2Meter(x, y, inverse=True)  # check conversion OK
         dx = x - reference_x
         dy = y - reference_y
