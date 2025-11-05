@@ -1,8 +1,23 @@
-import sys
-import os
+
 import time
 import numpy as np
 from numpy.ma.core import arctan2
+
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(__file__), 'drivers-ddboat-v2'))
+
+output_file = "log_mission_bouee_05_11_2025.txt"
+titres = "latitude\tlongitude\tdistance au waypoint\tcap\tcap à suivre\n"
+
+def initialiser_fichier(file, titres):
+    with open(file, 'w') as f:
+        f.write("titres\n")
+
+initialiser_fichier(output_file, titres)
+
+
 
 # access to the drivers
 sys.path.append(os.path.join(os.path.dirname(__file__), 'drivers-ddboat-v2'))
@@ -26,6 +41,13 @@ from pyproj import Proj, transform
 
 projDegree2Meter = Proj("+proj=utm +zone=30 +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
 
+def enregistrer_valeurs(file, lat, long, dist, cap, cap_com):
+    line = "{} {} {} {} {}\n".format(lat, long, dist, cap, cap_com)
+    try:
+        with open(file, 'a', encoding='utf-8') as f:
+            f.write(line)
+    except Exception as e:
+        print("Erreur lors de l'écriture : {}".format(e))
 
 def cvt_gll_ddmm_2_dd(st):
     ilat = st[0]
@@ -44,7 +66,7 @@ def cvt_gll_ddmm_2_dd(st):
 # On garde ta fonction de conversion telle qu’elle :
 def convert_cap_sensor_to_nav(cap_sensor):
     """Convertit le cap du capteur vers le système NAV (N=0°, E=90°, S=180°, O=270°)."""
-    return (-cap_sensor + 180) % 360
+    return (-cap_sensor + 180- 10) % 360
 
 
 class PIDCapController:
@@ -152,7 +174,7 @@ reference_x, reference_y = projDegree2Meter(lon_bouee, lat_bouee)
 
 gps = gpddrv.GpsIO()  # create a GPS object
 gps.set_filter_speed("0")  # allowing GPS measures to change even if the DDBoat is not moving
-cnt = 150  # takes 5 GPS measures
+cnt = 50  # takes 5 GPS measures
 distance = 40
 
 while distance > 0.5:
@@ -161,12 +183,12 @@ while distance > 0.5:
     if gll_ok:  # GPGLL message received
         lat, lon = cvt_gll_ddmm_2_dd(gll_data)  # convert DDMM.MMMM toDD.DDDDD
         x, y = projDegree2Meter(lon, lat)  # convert to meters
-        lat_check, lon_check = projDegree2Meter(x, y, inverse=True)  # check conversion OK
+        lon_check, lat_check = projDegree2Meter(x, y, inverse=True)  # check conversion OK
         dx = x - reference_x
         dy = y - reference_y
         distance = np.sqrt(dx * dx + dy * dy)
         heading_trigo = np.degrees(np.arctan2(dy, dx))
-        heading_geo = 90.0 - heading_trigo  # convert from trigonomety togeographic
+        heading_geo = (heading_trigo+15)%360  # convert from trigonomety togeographic
         print("lat=%.4flon=%.4f(check %.4f %.4f)x=%.2fy=%.2fdx=%.2f, dy=%.2f, distance=%.2f, heading=%.2f" %
               (lat, lon, lat_check, lon_check, x, y, dx, dy, distance, heading_geo))
         pnt = kml.newpoint(name="GPS", coords=[(lon, lat)])
@@ -194,22 +216,24 @@ while distance > 0.5:
         left_speed, right_speed = pid.correction_cap(cap_obj, cap_act)
         print(left_speed, right_speed)
         ard.send_arduino_cmd_motor(left_speed, right_speed)  # in place turn
-
+        enregistrer_valeurs(output_file,lat, lon, distance, convert_cap_sensor_to_nav(cap_act), heading_geo)
+        cnt -= 1
+        if cnt<0: break
     time.sleep(0.01)
 distance = 40
 reference_x, reference_y = projDegree2Meter(lon_ponton, lat_ponton)
-
+cnt = 50
 while distance > 0.5:
     gll_ok, gll_data = gps.read_gll_non_blocking()
     if gll_ok:  # GPGLL message received
         lat, lon = cvt_gll_ddmm_2_dd(gll_data)  # convert DDMM.MMMM toDD.DDDDD
         x, y = projDegree2Meter(lon, lat)  # convert to meters
-        lat_check, lon_check = projDegree2Meter(x, y, inverse=True)  # check conversion OK
+        lon_check, lat_check = projDegree2Meter(x, y, inverse=True)  # check conversion OK
         dx = x - reference_x
         dy = y - reference_y
         distance = np.sqrt(dx * dx + dy * dy)
         heading_trigo = np.degrees(np.arctan2(dy, dx))
-        heading_geo = 90.0 - heading_trigo  # convert from trigonomety togeographic
+        heading_geo = (heading_trigo+15)%360  # convert from trigonomety togeographic
         print("lat=%.4flon=%.4f(check %.4f %.4f)x=%.2fy=%.2fdx=%.2f, dy=%.2f, distance=%.2f, heading=%.2f" %
               (lat, lon, lat_check, lon_check, x, y, dx, dy, distance, heading_geo))
         pnt = kml.newpoint(name="GPS", coords=[(lon, lat)])
@@ -237,7 +261,11 @@ while distance > 0.5:
         left_speed, right_speed = pid.correction_cap(cap_obj, cap_act)
         print(left_speed, right_speed)
         ard.send_arduino_cmd_motor(left_speed, right_speed)  # in place turn
+        enregistrer_valeurs(output_file, lat, lon, distance, convert_cap_sensor_to_nav(cap_act), heading_geo)
     time.sleep(0.01)
+    cnt -= 1
+    if cnt < 0: break
 
 kml.save("gps_data.kml")
 
+print("\n Programme fini\n")
