@@ -1,13 +1,11 @@
 import numpy as np
 import scipy as sp
-import matplotlib
-matplotlib.use("TkAgg")
-from roblib import *
+import matplotlib.pyplot as plt
 
 
 
 # --- 1. Lecture + conversion µT ---
-data_raw = np.loadtxt("mag_raw_data.txt", skiprows=1)
+data_raw = np.loadtxt("mag_raw_data_static.txt", skiprows=1)
 
 
 def ell_in2_sph(data):
@@ -31,8 +29,8 @@ def ell_in2_sph(data):
     Q = np.array([[p[0], p[3]/2, p[4]/2],
                   [p[3]/2, p[1], p[5]/2],
                   [p[4]/2, p[5]/2, p[2]]])
-
-
+    racineQ=sp.linalg.sqrtm(Q)
+    print("Racine de la matrice Q :\n", racineQ)
     print("Matrice Q :\n", Q)
 
     b = -0.5 * np.linalg.inv(Q) @ np.array([[p[6]],
@@ -44,7 +42,7 @@ def ell_in2_sph(data):
     for i in range(n):
         xi, yi, zi = x[i], y[i], z[i]
         vec = np.array([[xi], [yi], [zi]])
-        data_corr[:, i]= (sp.linalg.sqrtm(Q) @ (vec - b)).ravel()
+        data_corr[:, i]= (sp.linalg.sqrtm(np.abs(Q)) @ (vec - b)).ravel()
 
 
     return data_corr[0,:], data_corr[1,:], data_corr[2,:]
@@ -133,23 +131,6 @@ print(f"Facteur de sphéricité : {sph_corr:.4f}")
 
 plot_ellipsoid(ax2, b_corr, radii_corr, eigvecs_corr, color='lime', alpha=0.4)
 
+
 plt.show()
 
-a0=array([[0],[0],[1]])
-
-a1=a0 #hypothèse si il n'y a pas de vagues, à améliorer pour après
-
-def bank(a1): #roulis
-    return np.arcsin(a1[1,0])
-def elevation(a1): #tanguage
-    return np.arcsin(a1[0,0])
-def heading(a1, y1) : #lacet
-    Rh=rotuv(a1,a0)
-    yh=Rh@y1
-    return -np.arctan2(yh[1],yh[0])
-
-n = data_raw.shape[0]
-y1_corr=np.column_stack((x_corr, y_corr,z_corr))
-for i in range(n):
-    y1_corr = np.array([x_corr[i], y_corr[i], z_corr[i]])
-    print("cap",heading(a1,y1_corr.T))
