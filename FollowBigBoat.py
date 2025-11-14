@@ -25,17 +25,17 @@ titres = "latitude\tlongitude\tdistance\tcap_act\tcap_obj\n"
 offset_mot = -10
 vitesse_base = 210
 
+
 # Gains PID initiaux
-Kp = 0.8
-Ki = 0.03
-Kd = 0.2
+Kp = 2.5
+Ki = 0
+Kd = 1
 
 # Définition de la projection UTM zone 30 (France Ouest)
 projDegree2Meter = Proj("+proj=utm +zone=30 +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
 
 # Points GPS
 lat_ponton, lon_ponton = 48.19924, -3.01479
-lat_bouee, lon_bouee   = 48.19923, -3.01617
 
 
 # ======================
@@ -164,8 +164,9 @@ pid = PIDCapController(Kp, Ki, Kd, vitesse_base, offset_mot)
 
 # === Paramètres du mouvement circulaire ===
 R1 = 230.0  # rayon (m)
-v = 5.0      # vitesse (m/s)
-T = 240.0    # durée totale (s)
+v = 3.5      # vitesse (m/s)
+T = 80.0    # durée totale (s)
+t_offset = 10
 lat_c, lon_c = 48.199706, -3.018784  # centre du cercle (°)
 
 # --- Calcul de la vitesse angulaire correspondant à 1 m/s ---
@@ -185,7 +186,14 @@ def local_to_geo(x, y, lat_ref, lon_ref):
 def R2(t,t0):
     return 50*np.exp(-(t-t0)/1000)+10
 
-
+lat= []
+lon= []
+for t in t_vals:
+    x = R1 * np.cos(omega1 * t)
+    y = R1 * np.sin(omega1 * t)
+    lat_i, lon_i = local_to_geo(x, y, lat_c, lon_c)
+    lat.append(lat_i)
+    lon.append(lon_i)
 
 
 
@@ -194,11 +202,11 @@ def R2(t,t0):
 # === BOUCLE PRINCIPALE GPS ===
 # ============================
 
-def mission(lat_target, lon_target, label="Bouée"):
+def mission(lat_target, lon_target, t_left,t0,label="Bouée"):
     reference_x, reference_y = projDegree2Meter(lon_target, lat_target)
     distance = 999
-
-    while distance > 4:
+    t=time.time()-t0
+    while distance > 4 and t<t_left:
         gll_ok, gll_data = gps.read_gll_non_blocking()
         if not gll_ok:
             time.sleep(0.05)
@@ -226,7 +234,8 @@ def mission(lat_target, lon_target, label="Bouée"):
 
         vg, vd = pid.correction_cap(heading_geo, cap_act)
         print("Moteurs: G={:.1f} D={:.1f}\n".format(vg, vd))
-
+        t = time.time() - t0
+        print("time:{} t_left ={}\n".format(int(t),t_left,))
         ard.send_arduino_cmd_motor(vg, vd)
         enregistrer_valeurs(output_file, lat, lon, distance, cap_nav, heading_geo)
         kml.newpoint(name=label, coords=[(lon, lat)])
@@ -240,12 +249,19 @@ def mission(lat_target, lon_target, label="Bouée"):
 # === LANCEMENT MISSION ===
 # =======================
 try:
-    for t in t_vals:
-        x = R1 * np.cos(omega1 * t)
-        y = R1 * np.sin(omega1 * t)
-        lat, lon = local_to_geo(x, y, lat_c, lon_c)
+    t0 = time.time()
+    print("aaaaaaaaaaaaaaaaaaaaaaaaa")
+    mission(lat[0], lon[0], t_left=t_offset,t0=t0, label="Point t=0s")
 
-        mission(lat, lon, label="Point t={:.1f}s".format(t))
+    for t in range(1, len(t_vals)):
+        t_target = t
+        current_time = time.time()
+        tleft = 1
+        print("bbbbbbbbbbbbbbbbbbbbbbbbb")
+        mission(lat[t], lon[t], tleft,t0=current_time, label="Point t={:.1f}s".format(t_target))
+
+
+
 finally:
     ard.send_arduino_cmd_motor(0, 0)
     kml.save("gps_data.kml")
