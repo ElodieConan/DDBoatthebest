@@ -68,19 +68,22 @@ def cvt_gll_ddmm_2_dd(st):
         olon = -olon
     return olat, olon
 
-def sawtooth(x):
-    return (x+np.pi)%(2*np.pi)-np.pi
 
 # ==================================
 # === CONVERSION CAP CAPTEUR/NAV ===
 # ==================================
 
+def sawtooth(x):
+    return (x+np.pi)%(2*np.pi)-np.pi
+
 def convert_cap_sensor_to_nav(cap_sensor):
     return (-cap_sensor + 180 - 10) % 360
 
 def controller(cap_obj, cap_act):
-    k1 = 1
+    k1 = 15
     u1 = k1*sawtooth(cap_obj-cap_act)
+    print("u1 = {}".format(u1))
+
     vit_mot_g = vitesse_base+u1-offset_mot
     vit_mot_d = vitesse_base-u1+offset_mot
 
@@ -128,6 +131,7 @@ gps.set_filter_speed("0")
 # ============================
 # === BOUCLE PRINCIPALE GPS ===
 # ============================
+reference_x, reference_y = projDegree2Meter(lon_ponton, lat_ponton)
 
 def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label):
     x_a, y_a = projDegree2Meter(lon_a, lat_a)
@@ -149,22 +153,33 @@ def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label):
         lat, lon = cvt_gll_ddmm_2_dd(gll_data)
         x, y = projDegree2Meter(lon, lat)
         pt_m = np.array([[x], [y]])
-        print("m",pt_m, "\n")
+
+        #Verification distance au ponton
+        dx = x - reference_x
+        dy = y - reference_y
+        distance = np.sqrt(dx * dx + dy * dy)
+        print("Distance au ponton", distance)
+        #---------------------------
+
 
         e = np.linalg.det(np.hstack((v_dir_uni_ab,pt_m-pt_a)))
         phi = np.arctan2(v_ab[1,0], v_ab[0,0])
         theta_bar = np.degrees(phi-np.tanh(e/k3))
-        heading_geo = (270 - theta_bar) % 360
+        heading_geo = (90-theta_bar) % 360
+        hdg_geo_rad = heading_geo*np.pi/180
+
 
         xmag, ymag, zmag = imu.read_mag_raw()
         Y = np.array([xmag, ymag, zmag])
         Y_corr = racineQ @ (Y - b)
         xmag_corr, ymag_corr, zmag_corr = Y_corr
-        cap_act = np.arctan2(ymag_corr, xmag_corr) * 180 / np.pi
+        cap_act_rad = np.arctan2(ymag_corr, xmag_corr)
+        cap_act = cap_act_rad* 180 / np.pi
         cap_nav = convert_cap_sensor_to_nav(cap_act)
+        cap_nav_rad = cap_nav * np.pi/180
         print("cap_act = {}  cap_obj = {}".format(cap_nav, heading_geo))
 
-        vg, vd = controller(heading_geo, cap_nav)
+        vg, vd = controller(hdg_geo_rad, cap_nav_rad)
         print("Moteurs: G={:.1f} D={:.1f}\n".format(vg, vd))
 
         ard.send_arduino_cmd_motor(vg, vd)
