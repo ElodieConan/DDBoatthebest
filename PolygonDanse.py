@@ -18,7 +18,7 @@ import gps_driver_v2 as gpddrv
 # === PARAMÈTRES GLOBAUX ===
 # ==========================
 
-output_file = "log_mission_triangle.txt"
+output_file = "log_mission_polygone.txt"
 titres = "latitude\tlongitude\tdistance\tcap_act\tcap_obj\n"
 
 offset_mot = -10
@@ -58,8 +58,50 @@ def enregistrer_valeurs(file, lat, lon, dist, cap_act, cap_obj):
 # === BIJECTION POLYGONE TRIGO ===
 # =======================
 
-def L(j,m):
-    pass
+points_GPS = np.array([[lat_a, lon_a],
+                       [lat_b, lon_b],
+                       [lat_c, lon_c],
+                       [lat_d, lon_d],
+                       [lat_e, lon_e]]).T
+
+j = np.shape(points_GPS)[1] #nbr de points/lignes
+
+points_m = np.zeros((2, j))
+
+for i in range(j):
+    x, y = projDegree2Meter(points_GPS[1,i], points_GPS[0,i])
+    points_m[0,i] = x
+    points_m[1,i] = y
+    #np.hstack((points_m, np.array([[x], [y]])))
+
+distance = 0
+
+Lg_seg=[]
+
+for i in range(j):
+    segment = points_m[:,(i+1)%j]-points_m[:,i]
+    print(segment)
+    L_seg = np.sqrt(segment[0]**2+segment[1]**2)
+    Lg_seg.append(L_seg)
+    distance += L_seg
+    #distance += np.linalg.norm(segment)
+
+a = distance/(2*np.pi)
+print("Coefficient de la bijection:", a)
+print(distance)
+
+N=6 #nbr robots
+i=1 #num de notre robot
+T=3*60 #temps de parcours en s
+
+phi_bar=i/N*2*np.pi
+
+t0=time.time()
+
+t=time.time()
+phi_t=2*np.pi*(t-t0)/T+phi_bar
+
+PHI=a*phi_bar    #distance départ sur le polygone
 
 # =======================
 # === CONVERSIONS GPS ===
@@ -141,7 +183,10 @@ gps.set_filter_speed("0")
 # ============================
 # === BOUCLE PRINCIPALE GPS ===
 # ============================
-reference_x, reference_y = projDegree2Meter(lon_ponton, lat_ponton)
+reference_x, reference_y = projDegree2Meter(lon_ponton, lat_ponton
+
+def seg_dep(PHI):
+    if
 
 def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label):
     x_a, y_a = projDegree2Meter(lon_a, lat_a)
@@ -201,14 +246,18 @@ def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label):
 
 try:
     print("Démarrage de la mission DDBoat...\n")
+
+
     SuiviDeLigne(lat_ponton, lon_ponton, lat_a, lon_a, label="Ponton->A")
     SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label="A->B")
     SuiviDeLigne(lat_b, lon_b, lat_c, lon_c, label="B->C")
-    SuiviDeLigne(lat_c, lon_c, lat_a, lon_a, label="C->A")
+    SuiviDeLigne(lat_c, lon_c, lat_d, lon_d, label="C->D")
+    SuiviDeLigne(lat_d, lon_d, lat_e, lon_e, label="D->E")
+    SuiviDeLigne(lat_e, lon_e, lat_d, lon_d, label="E->A")
     SuiviDeLigne(lat_a, lon_a, lat_ponton, lon_ponton, label="A->Ponton")
 
 finally:
     ard.send_arduino_cmd_motor(0, 0)
-    kml.save("gps_data_triangle.kml")
-    print("Données GPS enregistrées dans gps_data_triangle.kml")
+    kml.save("gps_data_polygone.kml")
+    print("Données GPS enregistrées dans gps_data_polygone.kml")
     print("Mission terminée.\n")
