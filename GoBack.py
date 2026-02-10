@@ -35,7 +35,7 @@ Kd = 0.25
 projDegree2Meter = Proj("+proj=utm +zone=30 +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
 
 # Points GPS
-lat_ponton, lon_ponton = 48.19925, -3.01473
+lat_ponton, lon_ponton = 48.19926, -3.01458
 
 
 # ================================
@@ -87,3 +87,4 @@ finally:
     kml.save("gps_data.kml")
     print("Données GPS enregistrées dans gps_data.kml")
     print("Mission terminée.\n")
+
