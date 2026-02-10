@@ -64,6 +64,8 @@ points_GPS = np.array([[lat_a, lon_a],
                        [lat_d, lon_d],
                        [lat_e, lon_e]]).T
 
+
+
 j = np.shape(points_GPS)[1] #nbr de points/lignes
 
 points_m = np.zeros((2, j))
@@ -74,15 +76,24 @@ for i in range(j):
     points_m[1,i] = y
     #np.hstack((points_m, np.array([[x], [y]])))
 
+SEG = np.zeros((2,j))
+
+for i in range(j):
+    SEG[0,i] = points_m[0,(i+1)%(j-1)] - points_m[0,i]
+    SEG[1,i] = points_m[1,(i+1)%(j-1)] - points_m[1,i]
+
 distance = 0
 
-Lg_seg=[]
+Lg_seg=[0 for i in range(j)] # liste qui donne la distance à parcourir entre le départ et le (i+1)ième pt
+                             # ex [||ab||, ||ab|| + ||bc||, ... ]
 
 for i in range(j):
     segment = points_m[:,(i+1)%j]-points_m[:,i]
     print(segment)
     L_seg = np.sqrt(segment[0]**2+segment[1]**2)
-    Lg_seg.append(L_seg)
+    if i >0:
+        Lg_seg[i] = L_seg + Lg_seg[i-1]
+    else: Lg_seg[i] = L_seg
     distance += L_seg
     #distance += np.linalg.norm(segment)
 
@@ -92,7 +103,7 @@ print(distance)
 
 N=6 #nbr robots
 i=1 #num de notre robot
-T=3*60 #temps de parcours en s
+T=3*60 #temps de parcours en s.
 
 phi_bar=i/N*2*np.pi
 
@@ -102,6 +113,14 @@ t=time.time()
 phi_t=2*np.pi*(t-t0)/T+phi_bar
 
 PHI=a*phi_bar    #distance départ sur le polygone
+
+def seg_dep(PHI): #pour connaitre le segment de départ
+    i=0
+    while PHI>Lg_seg[i]:
+        i+=1
+    return i
+
+o = seg_dep(PHI)
 
 # =======================
 # === CONVERSIONS GPS ===
@@ -132,7 +151,7 @@ def convert_cap_sensor_to_nav(cap_sensor):
     return (-cap_sensor + 180 - 10) % 360
 
 def controller(cap_obj, cap_act):
-    k1 = 15
+    k1 = 30
     u1 = k1*sawtooth(cap_obj-cap_act)
     print("u1 = {}".format(u1))
 
@@ -144,6 +163,8 @@ def controller(cap_obj, cap_act):
 
     return vit_mot_g, vit_mot_d
 
+def controller_vit(seg,PHI,m):
+    pass
 
 # ================================
 # === CALIBRATION MAGNÉTOMÈTRE ===
@@ -183,10 +204,10 @@ gps.set_filter_speed("0")
 # ============================
 # === BOUCLE PRINCIPALE GPS ===
 # ============================
-reference_x, reference_y = projDegree2Meter(lon_ponton, lat_ponton
+reference_x, reference_y = projDegree2Meter(lon_ponton, lat_ponton)
 
-def seg_dep(PHI):
-    if
+
+
 
 def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label):
     x_a, y_a = projDegree2Meter(lon_a, lat_a)
