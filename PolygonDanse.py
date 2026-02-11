@@ -22,7 +22,7 @@ output_file = "log_mission_polygone.txt"
 titres = "latitude\tlongitude\tdistance\tcap_act\tcap_obj\n"
 
 offset_mot = -10
-vitesse_base = 110
+vitesse_base = 150
 
 # Définition de la projection UTM zone 30 (France Ouest)
 projDegree2Meter = Proj("+proj=utm +zone=30 +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
@@ -152,20 +152,24 @@ def convert_cap_sensor_to_nav(cap_sensor):
     return (-cap_sensor + 180 - 10) % 360
 
 def controller_cap(cap_obj, cap_act):
-    k_cap = 15
-    u1 = k_cap*sawtooth(cap_obj-cap_act)
+    k_cap = 60
+    k_e = 1.2
+    u1 = k_cap*np.tanh(sawtooth(cap_obj-cap_act)/k_e)
     print("u1 = {}".format(u1))
     return u1
 
 
 def controller_vit(n,PHI,i,m,e):
-    k_vit = 15
+    k_vit = 30
     n_ortho = np.array([[-n[1,0]], [n[0,0]]])
     p = m - e*n_ortho
     if i>0:
         p_norm = np.linalg.norm(p) + Lg_seg[i-1]
     else : p_norm = np.linalg.norm(p)
-    return k_vit*np.tanh(PHI - p_norm)
+    u2 =  k_vit*np.tanh((PHI - p_norm)/2)
+    print("PHI-p_norm = {}".format(PHI-p_norm))
+    print("u2 = {}".format(u2))
+    return u2
 
 def commande_mot(vitesse_base, u1, u2):
     vit_mot_g = vitesse_base+u1+u2-offset_mot
@@ -228,9 +232,9 @@ def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, i, label):
     v_ab = pt_b-pt_a
     v_dir_uni_ab = v_ab/np.linalg.norm(v_ab)
 
-    k3 = 5
-    validation = 1
-    while validation > 0:
+    k3 = 5 #Fixe
+    validation = 101
+    while validation > 100:
         gll_ok, gll_data = gps.read_gll_non_blocking()
         if not gll_ok:
             time.sleep(0.05)
@@ -241,10 +245,13 @@ def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, i, label):
         pt_m = np.array([[x], [y]])
 
         t = time.time()
-        phi_t = 2 * np.pi * (t - t0) / T + phi_bar
+        k_t = 1
+        phi_t = 2*np.pi*k_t*(t-t0)/T+phi_bar
         PHI = L(phi_t)
 
-        e = np.linalg.det(np.hstack((v_dir_uni_ab,pt_m-pt_a)))
+        v_am = pt_m-pt_a
+
+        e = np.linalg.det(np.hstack((v_dir_uni_ab,v_am)))
         phi = np.arctan2(v_ab[1,0], v_ab[0,0])
         theta_bar = np.degrees(phi-np.tanh(e/k3))
         heading_geo = (90-theta_bar) % 360
@@ -262,7 +269,7 @@ def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, i, label):
         print("cap_act = {}  cap_obj = {}".format(cap_nav, heading_geo))
 
         u1 = controller_cap(hdg_geo_rad, cap_nav_rad)
-        u2 = controller_vit(v_dir_uni_ab,PHI,i,pt_m,e)
+        u2 = controller_vit(v_dir_uni_ab,PHI,i,v_am,e)
         vg, vd = commande_mot(vitesse_base, u1, u2)
         print("Moteurs: G={:.1f} D={:.1f}\n".format(vg, vd))
 
@@ -286,8 +293,10 @@ try:
 
     polygone = ["A->B", "B->C", "C->D", "D->E", "E->A"]
     for i in range(len(polygone)):
-        SuiviDeLigne(points_GPS[1,i%j], points_GPS[0,i%j], points_GPS[1,(i+1)%j], points_GPS[0,(i+1)%j], i, label=polygone[i])
-
+        SuiviDeLigne(points_GPS[0,i%j], points_GPS[1,i%j], points_GPS[0,(i+1)%j], points_GPS[1,(i+1)%j], i%j, label=polygone[i%j])
+        kml.save("gps_data_polygone.kml")
+    print(time.time()-t0)
+    #SuiviDeLigne(lat_a, lon_a, lat_ponton, lon_ponton, label="A->Ponton")
 finally:
     ard.send_arduino_cmd_motor(0, 0)
     kml.save("gps_data_polygone.kml")
