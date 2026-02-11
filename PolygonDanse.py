@@ -54,9 +54,9 @@ def enregistrer_valeurs(file, lat, lon, dist, cap_act, cap_obj):
 
 
 
-# =======================
+# ================================
 # === BIJECTION POLYGONE TRIGO ===
-# =======================
+# ================================
 
 points_GPS = np.array([[lat_a, lon_a],
                        [lat_b, lon_b],
@@ -101,18 +101,19 @@ a = distance/(2*np.pi)
 print("Coefficient de la bijection:", a)
 print(distance)
 
+def L(phi):
+    return a*phi
+
 N=6 #nbr robots
-i=1 #num de notre robot
+k=1 #num de notre robot
 T=3*60 #temps de parcours en s.
 
-phi_bar=i/N*2*np.pi
+phi_bar = 0
+#phi_bar=k/N*2*np.pi
 
 t0=time.time()
 
-t=time.time()
-phi_t=2*np.pi*(t-t0)/T+phi_bar
-
-PHI=a*phi_bar    #distance départ sur le polygone
+PHI=L(phi_bar)   #distance départ sur le polygone
 
 def seg_dep(PHI): #pour connaitre le segment de départ
     i=0
@@ -150,21 +151,30 @@ def sawtooth(x):
 def convert_cap_sensor_to_nav(cap_sensor):
     return (-cap_sensor + 180 - 10) % 360
 
-def controller(cap_obj, cap_act):
-    k1 = 30
-    u1 = k1*sawtooth(cap_obj-cap_act)
+def controller_cap(cap_obj, cap_act):
+    k_cap = 15
+    u1 = k_cap*sawtooth(cap_obj-cap_act)
     print("u1 = {}".format(u1))
+    return u1
 
-    vit_mot_g = vitesse_base+u1-offset_mot
-    vit_mot_d = vitesse_base-u1+offset_mot
+
+def controller_vit(n,PHI,i,m,e):
+    k_vit = 15
+    n_ortho = np.array([[-n[1,0]], [n[0,0]]])
+    p = m - e*n_ortho
+    if i>0:
+        p_norm = np.linalg.norm(p) + Lg_seg[i-1]
+    else : p_norm = np.linalg.norm(p)
+    return k_vit*np.tanh(PHI - p_norm)
+
+def commande_mot(vitesse_base, u1, u2):
+    vit_mot_g = vitesse_base+u1+u2-offset_mot
+    vit_mot_d = vitesse_base-u1+u2+offset_mot
 
     vit_mot_g = max(min(vit_mot_g, 255), 0)
     vit_mot_d = max(min(vit_mot_d, 255), 0)
 
     return vit_mot_g, vit_mot_d
-
-def controller_vit(seg,PHI,m):
-    pass
 
 # ================================
 # === CALIBRATION MAGNÉTOMÈTRE ===
@@ -209,7 +219,7 @@ reference_x, reference_y = projDegree2Meter(lon_ponton, lat_ponton)
 
 
 
-def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label):
+def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, i, label):
     x_a, y_a = projDegree2Meter(lon_a, lat_a)
     pt_a = np.array([[x_a], [y_a]])
     x_b, y_b= projDegree2Meter(lon_b, lat_b)
@@ -230,6 +240,10 @@ def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label):
         x, y = projDegree2Meter(lon, lat)
         pt_m = np.array([[x], [y]])
 
+        t = time.time()
+        phi_t = 2 * np.pi * (t - t0) / T + phi_bar
+        PHI = L(phi_t)
+
         e = np.linalg.det(np.hstack((v_dir_uni_ab,pt_m-pt_a)))
         phi = np.arctan2(v_ab[1,0], v_ab[0,0])
         theta_bar = np.degrees(phi-np.tanh(e/k3))
@@ -247,7 +261,9 @@ def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label):
         cap_nav_rad = cap_nav * np.pi/180
         print("cap_act = {}  cap_obj = {}".format(cap_nav, heading_geo))
 
-        vg, vd = controller(hdg_geo_rad, cap_nav_rad)
+        u1 = controller_cap(hdg_geo_rad, cap_nav_rad)
+        u2 = controller_vit(v_dir_uni_ab,PHI,i,pt_m,e)
+        vg, vd = commande_mot(vitesse_base, u1, u2)
         print("Moteurs: G={:.1f} D={:.1f}\n".format(vg, vd))
 
         ard.send_arduino_cmd_motor(vg, vd)
@@ -268,14 +284,9 @@ def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label):
 try:
     print("Démarrage de la mission DDBoat...\n")
 
-
-    SuiviDeLigne(lat_ponton, lon_ponton, lat_a, lon_a, label="Ponton->A")
-    SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, label="A->B")
-    SuiviDeLigne(lat_b, lon_b, lat_c, lon_c, label="B->C")
-    SuiviDeLigne(lat_c, lon_c, lat_d, lon_d, label="C->D")
-    SuiviDeLigne(lat_d, lon_d, lat_e, lon_e, label="D->E")
-    SuiviDeLigne(lat_e, lon_e, lat_d, lon_d, label="E->A")
-    SuiviDeLigne(lat_a, lon_a, lat_ponton, lon_ponton, label="A->Ponton")
+    polygone = ["A->B", "B->C", "C->D", "D->E", "E->A"]
+    for i in range(len(polygone)):
+        SuiviDeLigne(points_GPS[1,i%j], points_GPS[0,i%j], points_GPS[1,(i+1)%j], points_GPS[0,(i+1)%j], i, label=polygone[i])
 
 finally:
     ard.send_arduino_cmd_motor(0, 0)
