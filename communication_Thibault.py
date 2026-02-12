@@ -6,7 +6,7 @@ class Communication:
     def __init__(self,port=29200,mission_start_time=0,mission_duration=100):
         self.local_server_ip = "0.0.0.0"
         self.our_ddboat_ip = "172.20.25.209"  # ligne ou vous mettez votre adresse ip
-        self.distant_server_ip = "172.20.25.207"  # server hostname or IP address
+        self.distant_server_ip = "172.20.25.2"  # server hostname or IP address
         self.log_server_ip = "172.20.254.254"  # server hostname or IP address
         self.port = port  # server port number has to be > 1024
         self.log_server_port = 6969
@@ -16,6 +16,9 @@ class Communication:
         self.broadcast_period = 1 # 1Hz
         self.time_out = self.broadcast_period + 10
         self.t0 = time.time()
+        self.data = (0,0,0)
+        self.data_front_boat = (0,0,0)
+
         #self.tf = self.t0+mission_duration
 
     def parse_send_data(self,x,y,phi):
@@ -48,7 +51,7 @@ class Communication:
         try:
             while True:
                 # receive and print client messages
-                ddboat_data = self.parse_send_data(0,0,0) #################### Ici doit etre lie a notre ddboat pour connaitre ses donnes
+                ddboat_data = self.parse_send_data(self.data[0],self.data[0],self.data[0]) #################### Ici doit etre lie a notre ddboat pour connaitre ses donnes
                 client_socket.send(ddboat_data.encode("utf-8")[:1024])
 
                 # si la mission se fini, envoie du message de fin de la connection
@@ -128,6 +131,7 @@ class Communication:
                         break
                     else:
                         decoded_data = self.parse_received_data(response)
+                        self.data_front_boat = decoded_data
                         print("DDBoat",ddboat_number,"at coords",decoded_data[0],",",decoded_data[1],"with phase",decoded_data[2])
                 except socket.timeout:
                     print("No response, stopping client.")
