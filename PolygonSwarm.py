@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import time
+import numpy as np
+import sys, os
+import simplekml
+from pyproj import Proj
+import threading
+from Com_Hugo import DDBoatNetwork2
+import socket
+stop_request = False
+
+# === Import des drivers DDBoat ===
+sys.path.append(os.path.join(os.path.dirname(__file__), 'drivers-ddboat-v2'))
+import arduino_driver_v2 as arddrv
+import imu9_driver_v2 as imudrv
+import gps_driver_v2 as gpddrv
+
+
+# ==========================
+# === PARAMÈTRES GLOBAUX ===
+# ==========================
+
+output_file = "log_mission_polygone.txt"
+titres = "latitude\tlongitude\tdistance\tcap_act\tcap_obj\n"
+
+offset_mot = -10
+vitesse_base = 100
+
+# Définition de la projection UTM zone 30 (France Ouest)
+projDegree2Meter = Proj("+proj=utm +zone=30 +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
+
+# Points GPS
+lat_ponton, lon_ponton = 48.19925, -3.01473
+lat_a, lon_a   = 48.199269, -3.014768
+lat_b, lon_b   = 48.199225, -3.015445
+lat_c, lon_c   = 48.198852, -3.014891
+lat_d, lon_d   = 48.198515, -3.015230
+lat_e, lon_e   = 48.198698, -3.015790
+
+#list_ecoute = ["14"]
+
+data_boat = (0,0)
+data_front_boat = (0,0)
+
+# ======================
+# === OUTILS FICHIERS ===
+# ======================
+
+def initialiser_fichier(file, titres):
+    with open(file, 'w', encoding='utf-8') as f:
+        f.write(titres)
+
+def enregistrer_valeurs(file, lat, lon, dist, cap_act, cap_obj):
+    line = "{}\t{}\t{}\t{}\t{}\n".format(lat, lon, dist, cap_act, cap_obj)
+    try:
+        with open(file, 'a', encoding='utf-8') as f:
+            f.write(line)
+    except Exception as e:
+        print("Erreur écriture : {}".format(e))
+
+
+
+# ================================
+# === BIJECTION POLYGONE TRIGO ===
+# ================================
+
+points_GPS = np.array([[lat_a, lon_a],
+                       [lat_b, lon_b],
+                       [lat_c, lon_c],
+                       [lat_d, lon_d],
+                       [lat_e, lon_e]]).T
+
+
+
+j = np.shape(points_GPS)[1] #nbr de points/lignes
+
+points_m = np.zeros((2, j))
+
+for i in range(j):
+    x, y = projDegree2Meter(points_GPS[1,i], points_GPS[0,i])
+    points_m[0,i] = x
+    points_m[1,i] = y
+    #np.hstack((points_m, np.array([[x], [y]])))
+
+SEG = np.zeros((2,j))
+
+for i in range(j):
+    SEG[0,i] = points_m[0,(i+1)%(j-1)] - points_m[0,i]
+    SEG[1,i] = points_m[1,(i+1)%(j-1)] - points_m[1,i]
+
+distance = 0
+
+Lg_seg=[0 for i in range(j)] # liste qui donne la distance à parcourir entre le départ et le (i+1)ième pt
+                             # ex [||ab||, ||ab|| + ||bc||, ... ]
+
+for i in range(j):
+    segment = points_m[:,(i+1)%j]-points_m[:,i]
+    print(segment)
+    L_seg = np.sqrt(segment[0]**2+segment[1]**2)
+    if i >0:
+        Lg_seg[i] = L_seg + Lg_seg[i-1]
+    else: Lg_seg[i] = L_seg
+    distance += L_seg
+    #distance += np.linalg.norm(segment)
+
+a = distance/(2*np.pi)
+print("Coefficient de la bijection:", a)
+print(distance)
+
+def L(phi):
+    return a*phi
+
+t0=time.time()
+
+N=2 #nbr robots
+T=320 #temps de parcours en s.
+
+phi_bar=2/3*2*np.pi
+PHI_BAR = L(phi_bar)
+PHI_obj = PHI_BAR
+
+# ================================
+# === COMMUNICATION ===
+# ================================
+# ========== CONFIGURATION RESEAU TCP ==========
+MY_PORT = 29200
+PEERS = [("172.20.25.208", 29200), ("172.20.25.211", 29200),("172.20.25.214", 29200),("172.20.25.205", 29200),("172.20.25.207",29200)]
+
+network = DDBoatNetwork2(
+    ddboat_id=0,
+    my_port=MY_PORT,
+    peers=PEERS,
+    bind_ip="0.0.0.0",
+    send_hz=1.0,
+    verbose=False,         # <-- IMPORTANT
+    connect_retry_s=2.0    # <-- optionnel: moins de spam/retry
+)
+network.start()
+
+srv_lon = 0.0
+srv_lat = 0.0
+srv_seg = 0
+
+def envoi_serveur():
+    return "09|" + str(srv_lon) + "|" + str(srv_lat) + "|" + str(srv_seg)
+
+class P2P_serveur:
+    def __init__(self):
+        self.my_IP = "172.20.25.209"
+        self.other_IP = "172.20.254.254"
+        self.port_serveur = 6969
+        self.last_msg = ""
+        #self.lon = 0.0
+        #self.lat = 0.0
+        #self.n_seg = 0
+
+    def start_sending_serveur(self, get_data_func):
+        threading.Thread(target=self._loop_send_UDP, args=(get_data_func,), daemon=True).start()
+
+    def _loop_send_UDP(self, get_data_func):
+        # Création du socket UDP (SOCK_DGRAM) une seule fois
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        while True:
+            message = get_data_func()
+            try:
+                # En UDP, on utilise sendto avec l'adresse cible
+                sock.sendto(message.encode('utf-8'), (self.other_IP, self.port_serveur))
+            except Exception as e:
+            # Très rare en UDP, mais évite tout de même un crash
+                pass
+            time.sleep(1)
+
+# =======================
+# === CONVERSIONS GPS ===
+# =======================
+
+def cvt_gll_ddmm_2_dd(st):
+    ilat = st[0]
+    ilon = st[2]
+    olat = float(int(ilat / 100))
+    olon = float(int(ilon / 100))
+    olat_mm = (ilat % 100) / 60
+    olon_mm = (ilon % 100) / 60
+    olat += olat_mm
+    olon += olon_mm
+    if st[3] == "W":
+        olon = -olon
+    return olat, olon
+
+
+# ==================================
+# === CONVERSION CAP CAPTEUR/NAV ===
+# ==================================
+
+def sawtooth(x):
+    return (x+np.pi)%(2*np.pi)-np.pi
+
+def convert_cap_sensor_to_nav(cap_sensor):
+    return (-cap_sensor + 180 - 10) % 360
+
+def controller_cap(cap_obj, cap_act):
+    k_cap = 60
+    k_e = 1.2
+    u1 = k_cap*np.tanh(sawtooth(cap_obj-cap_act)/k_e)
+    print("u1 = {}".format(u1))
+    return u1
+
+
+def controller_vit(PHI_obj, PHI):
+    k_vit_p = 30
+    k_vit_m = vitesse_base
+    ecart = (PHI_obj - PHI)
+    u2p = k_vit_p*np.tanh(ecart/(distance*0.5))
+    u2m = k_vit_m*np.tanh(ecart/(distance*0.5))
+    u2 =  min(u2p, u2m)
+    print("PHI_obj-PHI = {}".format(PHI_obj - PHI))
+    print("u2 = {}".format(u2))
+    return u2
+
+def commande_mot(vitesse_base, u1, u2):
+    vit_mot_g = vitesse_base+u1+u2-offset_mot
+    vit_mot_d = vitesse_base-u1+u2+offset_mot
+
+    vit_mot_g = max(min(vit_mot_g, 255), 0)
+    vit_mot_d = max(min(vit_mot_d, 255), 0)
+
+    return vit_mot_g, vit_mot_d
+
+# ================================
+# === CALIBRATION MAGNÉTOMÈTRE ===
+# ================================
+
+p = np.array([9.19344322e-08, 8.86431491e-08, 1.40532829e-08, 2.99160959e-08,
+              -2.11090640e-08, 1.65789833e-08, 3.76555627e-05, -7.74120350e-05,
+              -6.36399910e-05])
+
+Q = np.array([[9.19344322e-08, 1.49580480e-08, -1.05545320e-08],
+              [1.49580480e-08, 8.86431491e-08, 8.28949163e-09],
+              [-1.05545320e-08, 8.28949163e-09, 1.40532829e-08]])
+
+racineQ = np.array([[3.00888414e-04, 2.60587871e-05, -2.68613861e-05],
+                    [2.60587871e-05, 2.95772384e-04, 2.19723862e-05],
+                    [-2.68613861e-05, 2.19723862e-05, 1.13353267e-04]])
+
+b = -0.5 * np.array([
+    (1 / Q[0, 0]) * p[6],
+    (1 / Q[1, 1]) * p[7],
+    (1 / Q[2, 2]) * p[8]
+])
+
+# ======================
+# === INITIALISATION ===
+# ======================
+
+initialiser_fichier(output_file, titres)
+kml = simplekml.Kml()
+
+ard = arddrv.ArduinoIO()
+imu = imudrv.Imu9IO()
+gps = gpddrv.GpsIO()
+gps.set_filter_speed("0")
+
+
+# ============================
+# === BOUCLE PRINCIPALE GPS ===
+# ============================
+
+def SuiviDeLigne(lat_a, lon_a, lat_b, lon_b, i, label):
+    global exist_thread, srv_lon, srv_lat, srv_seg
+    x_a, y_a = projDegree2Meter(lon_a, lat_a)
+    pt_a = np.array([[x_a], [y_a]])
+    x_b, y_b= projDegree2Meter(lon_b, lat_b)
+    pt_b = np.array([[x_b], [y_b]])
+
+    v_ab = pt_b-pt_a
+    v_dir_uni_ab = v_ab/np.linalg.norm(v_ab)
+    n_ortho = np.array([[-v_dir_uni_ab[1, 0]], [v_dir_uni_ab[0, 0]]])
+
+    k3 = 5 #Fixe
+    validation = 101
+
+
+    while validation > 100:
+        gll_ok, gll_data = gps.read_gll_non_blocking()
+        if not gll_ok:
+            time.sleep(0.05)
+            continue
+
+        lat, lon = cvt_gll_ddmm_2_dd(gll_data)
+        x, y = projDegree2Meter(lon, lat)
+        pt_m = np.array([[x], [y]])
+
+        v_am = pt_m-pt_a
+
+        e = np.linalg.det(np.hstack((v_dir_uni_ab,v_am)))
+        phi = np.arctan2(v_ab[1,0], v_ab[0,0])
+        theta_bar = np.degrees(phi-np.tanh(e/k3))
+        heading_geo = (90-theta_bar) % 360
+        hdg_geo_rad = heading_geo*np.pi/180
+
+        p = v_am - e * n_ortho
+        if i > 0:
+            PHI = np.linalg.norm(p) + Lg_seg[i - 1]
+        else:
+            PHI = np.linalg.norm(p)
+        phase_rad = PHI/distance*2*np.pi
+
+        jjjjjj = 0
+        network.update_my_data(j=jjjjjj, phase=phase_rad)
+
+        # Récupérer la phase du peer
+        p208 = network.get_peer_phase("172.20.25.208")
+        p211 = network.get_peer_phase("172.20.25.211")
+        p205 = network.get_peer_phase("172.20.25.205")
+        p214 = network.get_peer_phase("172.20.25.214")
+        p207 = network.get_peer_phase("172.20.25.207")
+        print("phase_mael=", p208)
+        #print("phase_matys=", p205)
+        print("phase_hugo=", p214)
+        print("phase_Guilhem", p207)
+
+        xmag, ymag, zmag = imu.read_mag_raw()
+        Y = np.array([xmag, ymag, zmag])
+        Y_corr = racineQ @ (Y - b)
+        xmag_corr, ymag_corr, zmag_corr = Y_corr
+        cap_act_rad = np.arctan2(ymag_corr, xmag_corr)
+        cap_act = cap_act_rad* 180 / np.pi
+        cap_nav = convert_cap_sensor_to_nav(cap_act)
+        cap_nav_rad = cap_nav * np.pi/180
+        print("cap_act = {}  cap_obj = {}".format(cap_nav, heading_geo))
+
+        # Attendre que le bateau leader envoie ses données
+        PHI_front = p207
+        if PHI_front is not None:
+
+            PHI_obj = (PHI_front-2*np.pi/16)%(2*np.pi)
+            PHI_obj = PHI_obj*distance/(2*np.pi)
+            u1 = controller_cap(hdg_geo_rad, cap_nav_rad)
+            u2 = controller_vit(PHI_obj, PHI)
+            vg, vd = commande_mot(vitesse_base, u1, u2)
+            print("Moteurs: G={:.1f} D={:.1f}\n".format(vg, vd))
+
+            ard.send_arduino_cmd_motor(vg, vd)
+            enregistrer_valeurs(output_file, lat, lon, validation, cap_nav, heading_geo)
+            kml.newpoint(name=label, coords=[(lon, lat)])
+
+            validation = float(v_ab.T@(pt_b-pt_m))
+            print("[{}] lat={:.5f} lon={:.5f} dist={:.2f} heading_geo={:.1f}".format(label, lat, lon, validation, heading_geo))
+            time.sleep(0.1)
+        else:
+            print("En attente des données du bateau Guilhem...")
+            time.sleep(0.1)
+
+        if exist_thread == 0:
+            classe = P2P_serveur()
+            thread_serveur = classe.start_sending_serveur(envoi_serveur)
+            exist_thread = 1
+        srv_lon = lon
+        srv_lat = lat
+        srv_seg = i%j
+
+    print("Arrivé au point {} !".format(label))
+
+
+# =======================
+# === LANCEMENT MISSION ===
+# =======================
+
+try:
+    print("Démarrage de la mission DDBoat...\n")
+
+    exist_thread = 0
+
+    polygone = ["A->B", "B->C", "C->D", "D->E", "E->A"]
+    i = 0
+    while True:
+        SuiviDeLigne(points_GPS[0, i % j], points_GPS[1, i % j], points_GPS[0, (i + 1) % j], points_GPS[1, (i + 1) % j],i % j, label=polygone[i % j])
+        kml.save("gps_data_polygone.kml")
+        i += 1
+    print(time.time()-t0)
+    #SuiviDeLigne(lat_a, lon_a, lat_ponton, lon_ponton, label="A->Ponton")
+finally:
+
+    ard.send_arduino_cmd_motor(0, 0)
+    network.stop()
+    kml.save("gps_data_polygone.kml")
+    print("Données GPS enregistrées dans gps_data_polygone.kml")
+    print("Mission terminée.\n")
